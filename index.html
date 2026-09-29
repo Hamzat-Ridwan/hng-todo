@@ -441,6 +441,7 @@
     .list-footer {
       min-height: 48px;
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
@@ -448,9 +449,14 @@
       font-size: 10px;
     }
 
+    .clear-actions { display: flex; align-items: center; gap: 14px; }
+
     .clear-button { padding: 7px 0; border: 0; background: transparent; color: var(--green); cursor: pointer; font-size: 10px; }
     .clear-button:hover { color: var(--green-dark); text-decoration: underline; }
     .clear-button:disabled { color: #b4bab3; cursor: default; text-decoration: none; }
+    .clear-button.all { color: #9aa19a; }
+    .clear-button.all:hover { color: #b65039; }
+    .clear-button.all.confirm { color: var(--coral); font-weight: 700; text-decoration: underline; }
 
     @media (max-width: 760px) {
       .app-shell { width: min(100% - 24px, 620px); min-height: calc(100vh - 24px); margin: 12px auto; }
@@ -551,7 +557,10 @@
           <ul class="task-list" id="task-list" aria-live="polite"></ul>
           <div class="list-footer">
             <span id="footer-count"></span>
-            <button class="clear-button" id="clear-completed" type="button">Clear completed</button>
+            <div class="clear-actions">
+              <button class="clear-button" id="clear-completed" type="button">Clear completed</button>
+              <button class="clear-button all" id="clear-all" type="button" title="Empty every list in this app">Clear all tasks</button>
+            </div>
           </div>
         </section>
       </main>
@@ -560,7 +569,8 @@
 
   <script>
     (() => {
-      const storageKey = "daymark.tasks.v1";
+      const storageKey = "daymark.tasks.v2";
+      const retiredStorageKeys = ["daymark.tasks.v1"];
       const noteLimit = 500;
       const today = new Date();
       const dateKey = (date) => {
@@ -570,18 +580,19 @@
         return `${year}-${month}-${day}`;
       };
       const todayKey = dateKey(today);
-      const starterTasks = [
-        { id: "starter-1", title: "Make a little space for the important work", dueDate: todayKey, priority: "high", completed: false, note: "Start with the one thing that would make the rest feel smaller." },
-        { id: "starter-2", title: "Step away from the screen for a proper break", dueDate: todayKey, priority: "low", completed: false, note: "" },
-        { id: "starter-3", title: "Write down one thing that went well", dueDate: todayKey, priority: "normal", completed: true, note: "" },
-        { id: "starter-4", title: "Pick up where you left off", dueDate: dateKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1)), priority: "normal", completed: false, note: "Notes live with each task — add your own by tapping the pencil." }
-      ];
+
+      // Lists start empty: anything saved by earlier versions is discarded on start-up.
+      retiredStorageKeys.forEach((key) => {
+        try { localStorage.removeItem(key); }
+        catch { /* Nothing to retire when storage is unavailable. */ }
+      });
 
       let tasks = loadTasks();
       let activeView = "today";
       let openNoteId = null;
       let noteDraft = null;
       let pendingNoteFocus = false;
+      let clearAllTimer = null;
 
       const elements = {
         topbarDate: document.getElementById("topbar-date"),
@@ -600,6 +611,7 @@
         listCount: document.getElementById("list-count"),
         footerCount: document.getElementById("footer-count"),
         clearCompleted: document.getElementById("clear-completed"),
+        clearAll: document.getElementById("clear-all"),
         navButtons: [...document.querySelectorAll(".nav-button")]
       };
 
@@ -610,11 +622,11 @@
       function loadTasks() {
         try {
           const saved = localStorage.getItem(storageKey);
-          if (saved === null) return starterTasks;
+          if (saved === null) return [];
           const parsed = JSON.parse(saved);
-          return Array.isArray(parsed) ? parsed.map(withNote) : starterTasks;
+          return Array.isArray(parsed) ? parsed.filter(Boolean).map(withNote) : [];
         } catch {
-          return starterTasks;
+          return [];
         }
       }
 
@@ -655,6 +667,18 @@
         elements.progressTrack.setAttribute("aria-valuemax", String(todaysTasks.length));
         elements.progressTrack.setAttribute("aria-valuenow", String(todaysDone));
         elements.clearCompleted.disabled = completedCount === 0;
+        elements.clearAll.disabled = tasks.length === 0;
+        disarmClearAll();
+      }
+
+      function disarmClearAll() {
+        if (clearAllTimer) {
+          clearTimeout(clearAllTimer);
+          clearAllTimer = null;
+        }
+        elements.clearAll.textContent = "Clear all tasks";
+        elements.clearAll.classList.remove("confirm");
+        elements.clearAll.title = "Empty every list in this app";
       }
 
       function render() {
@@ -905,6 +929,21 @@
 
       elements.clearCompleted.addEventListener("click", () => {
         tasks = tasks.filter((task) => !task.completed);
+        saveTasks();
+        render();
+      });
+
+      elements.clearAll.addEventListener("click", () => {
+        if (!clearAllTimer) {
+          elements.clearAll.textContent = "Tap again to erase everything";
+          elements.clearAll.classList.add("confirm");
+          elements.clearAll.title = "Tap again to confirm, or wait for it to cancel";
+          clearAllTimer = setTimeout(disarmClearAll, 4000);
+          return;
+        }
+        tasks = [];
+        closeNoteEditor();
+        activeView = "today";
         saveTasks();
         render();
       });
